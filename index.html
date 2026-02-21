@@ -1,0 +1,163 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sonova | Compensation Bands</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="brand-title">Compensation Bands</div>
+          <div class="brand-sub">Uso interno</div>
+        </div>
+
+        <div class="actions">
+          <label class="btn secondary" for="fileInput">Importar Excel</label>
+          <input id="fileInput" type="file" accept=".xlsx,.xls" />
+          <button id="btnExportTxt" class="btn secondary" type="button">Exportar TXT</button>
+          <button id="btnExportXlsx" class="btn secondary" type="button">Exportar Excel</button>
+          <button id="btnClear" class="btn danger" type="button">Limpar storage</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <main>
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Filtros</h2>
+            <p id="dataInfo">Importe um Excel para gerar o posicionamento por faixa.</p>
+          </div>
+          <div style="text-align:right;">
+            <p id="tableInfo"></p>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="field">
+            <label for="fSearch">Busca</label>
+            <div class="inputwrap"><input id="fSearch" type="text" placeholder="Nome, cargo, job family, band, level" /><button id="btnClearSearch" class="clearbtn" type="button">X</button></div>
+          </div>
+
+          <div class="field">
+            <label for="fJobFamily">Job Family</label>
+            <select id="fJobFamily"></select>
+          </div>
+
+          <div class="field">
+            <label for="fBand">Pay Band</label>
+            <select id="fBand"></select>
+          </div>
+
+          <div class="field">
+            <label for="fLevel">Sonova Level</label>
+            <select id="fLevel"></select>
+          </div>
+
+          <div class="field">
+            <label for="fStatus">Status</label>
+            <select id="fStatus"></select>
+          </div>
+
+          <div class="field">
+            <label for="fCurrency">Moeda</label>
+            <select id="fCurrency"></select>
+          </div>
+
+          <div class="field">
+            <label for="fMinCompa">Compa mínimo</label>
+            <div class="inputwrap"><input id="fMinCompa" type="number" step="0.01" placeholder="ex: 0,80" /><button id="btnClearMinCompa" class="clearbtn" type="button">X</button></div>
+          </div>
+
+          <div class="field">
+            <label for="fMaxCompa">Compa máximo</label>
+            <div class="inputwrap"><input id="fMaxCompa" type="number" step="0.01" placeholder="ex: 1,20" /><button id="btnClearMaxCompa" class="clearbtn" type="button">X</button></div>
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <div style="display:flex; gap:10px;">
+              <button id="btnApply" class="btn" type="button">Aplicar</button>
+              <button id="btnReset" class="btn secondary" type="button">Reset</button>
+            </div>
+          </div>
+                </div>
+
+        <div class="extras">
+          <details id="colPicker" class="colpick">
+            <summary>Colunas extras</summary>
+            <div id="colPickerBody" class="colpick-body"></div>
+          </details>
+          <div id="extraFilters" class="filters filters-extra"></div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi highlight">
+            <div class="kpi-label">Colaboradores</div>
+            <div class="kpi-value" id="kpiTotal">0</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Abaixo (&lt;80)</div>
+            <div class="kpi-value" id="kpiBelow">0</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Dentro (80-120)</div>
+            <div class="kpi-value" id="kpiWithin">0</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Acima (&gt;120)</div>
+            <div class="kpi-value" id="kpiAbove">0</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Compa médio</div>
+            <div class="kpi-value" id="kpiAvgCompa">0,00</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Posicionamento por Faixa</h2>
+            <p>Faixa visual: P80 a P120, linha no P100, marcador no salário.</p>
+          </div>
+        </div>
+
+        <div class="tablebox">
+          <div class="tablewrap">
+            <table>
+              <thead id="tblHead"></thead>
+              <tbody id="tblBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Diagnóstico rápido</h2>
+            <p id="diagHint">Se não existir tabela de Pay Bands no Excel, o sistema estima as faixas por grupo + level.</p>
+          </div>
+        </div>
+        <div class="diag" id="diagBox"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>Uso interno</div>
+      <div id="buildInfo"></div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

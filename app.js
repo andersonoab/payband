@@ -14,6 +14,7 @@
   const STORAGE_KEY = "sonova_comp_bands_v4";
   const STORAGE_META = "sonova_comp_bands_meta_v4";
   const STORAGE_COLS = "sonova_comp_bands_cols_v4";
+  const STORAGE_BANDS = "sonova_comp_bands_catalog_v4";
 
   const el = (id) => document.getElementById(id);
 
@@ -24,6 +25,8 @@
     btnClear: el("btnClear"),
     btnApply: el("btnApply"),
     btnReset: el("btnReset"),
+    btnEditMode: el("btnEditMode"),
+    btnRevertAll: el("btnRevertAll"),
 
     fSearch: el("fSearch"),
     fJobFamily: el("fJobFamily"),
@@ -45,6 +48,7 @@
     kpiWithin: el("kpiWithin"),
     kpiAbove: el("kpiAbove"),
     kpiAvgCompa: el("kpiAvgCompa"),
+    kpiEdited: el("kpiEdited"),
 
     tblHead: el("tblHead"),
     tblBody: el("tblBody"),
@@ -61,6 +65,8 @@
     extraFilterValues: {}, // {col: selectedValue}
     extraFilterModes: {}, // {col: 'select'|'contains'}
     sort: { key: null, dir: 1 }, // dir: 1 asc, -1 desc
+    editMode: false,
+    bandsCatalog: [], // {group, currency, level, p80, p100, p120, source}
   };
 
   function nowISO() { return new Date().toISOString(); }
@@ -561,10 +567,181 @@
         compa,
         status,
         bandSource: b ? (b.source || "Estimado") : "Nenhuma",
-        extras: e.extras || {}
+        extras: e.extras || {},
+
+        // v4.3 - flags de edição inline (sempre presentes para evitar undefined)
+        manualEdited: false,
+        manualFields: {} // ex: { payBand: true, baseSalary: true, p100: true }
       };
     });
   }
+
+  // ===== v4.3 - Edição inline =====
+
+  // Constrói o catálogo {group, currency, level -> p80/p100/p120} a partir das linhas
+  // já calculadas. Usa apenas linhas NÃO editadas manualmente como fonte.
+  function buildBandsCatalogFromRows(rows) {
+    const map = new Map();
+    for (const r of (rows || [])) {
+      if (r.manualEdited) continue;
+      const group = safeText(r.group || r.payBand);
+      const cur = safeText(r.currency);
+      const lvl = safeText(r.levelLetter || r.level);
+      if (!group || !lvl) continue;
+      if (!Number.isFinite(r.p100)) continue;
+
+      const key = normKey([group, cur, lvl]);
+      if (map.has(key)) continue; // primeiro vence (já que vêm consistentes do joinAndCompute)
+      map.set(key, {
+        group, currency: cur, level: lvl,
+        p80: Number.isFinite(r.p80) ? r.p80 : null,
+        p100: r.p100,
+        p120: Number.isFinite(r.p120) ? r.p120 : null,
+        source: r.bandSource || "Catalogo"
+      });
+    }
+    return Array.from(map.values());
+  }
+
+  function lookupBand(group, currency, level) {
+    const g = safeText(group);
+    const c = safeText(currency);
+    const l = safeText(level);
+    const key = normKey([g, c, l]);
+    return (state.bandsCatalog || []).find(b => normKey([b.group, b.currency, b.level]) === key) || null;
+  }
+
+  // Recalcula uma linha após edição. Respeita overrides em manualFields.
+  function recomputeRow(row) {
+    if (!row) return;
+
+    // Se algum P80/P100/P120 NÃO está em manualFields, busca no catálogo.
+    const mf = row.manualFields || {};
+    const hasManualP = mf.p80 || mf.p100 || mf.p120;
+
+    if (!hasManualP) {
+      const b = lookupBand(row.payBand || row.group, row.currency, row.levelLetter || row.level);
+      if (b) {
+        row.p80 = Number.isFinite(b.p80) ? b.p80 : null;
+        row.p100 = Number.isFinite(b.p100) ? b.p100 : null;
+        row.p120 = Number.isFinite(b.p120) ? b.p120 : null;
+        row.group = b.group;
+        if (!mf.payBand && !mf.baseSalary && !mf.level) {
+          row.bandSource = b.source || "Catalogo";
+        } else {
+          row.bandSource = b.source ? (b.source + " (editado)") : "Editado";
+        }
+      } else {
+        // grupo/level sem correspondência no catálogo
+        row.p80 = null;
+        row.p100 = null;
+        row.p120 = null;
+        row.bandSource = "Sem faixa (editado)";
+      }
+    } else {
+      // pelo menos um P é manual: mantém o que está em row, marca origem
+      row.bandSource = "Manual";
+    }
+
+    // Compa e Status
+    const salary = row.baseSalary;
+    row.compa = (Number.isFinite(salary) && Number.isFinite(row.p100) && row.p100 !== 0) ? (salary / row.p100) : null;
+
+    if (Number.isFinite(salary) && Number.isFinite(row.p80) && Number.isFinite(row.p120)) {
+      if (salary < row.p80) row.status = "Abaixo (<80)";
+      else if (salary > row.p120) row.status = "Acima (>120)";
+      else row.status = "Dentro (80-120)";
+    } else if (Number.isFinite(salary) && Number.isFinite(row.p100)) {
+      row.status = "Sem P80/P120";
+    } else {
+      row.status = "Sem faixa";
+    }
+
+    row.manualEdited = Object.values(row.manualFields || {}).some(Boolean);
+  }
+
+  // Aplica edição em um campo específico, recalcula, persiste e re-renderiza.
+  function applyRowEdit(row, field, newValue) {
+    if (!row) return;
+    if (!row.manualFields) row.manualFields = {};
+
+    if (field === "payBand") {
+      const v = safeText(newValue);
+      if (v === safeText(row.payBand)) return; // sem mudança
+      row.payBand = v;
+      row.manualFields.payBand = true;
+    } else if (field === "level") {
+      const v = safeText(newValue).toUpperCase();
+      const letter = normalizeLevel(v) || v.slice(0,1);
+      row.level = v;
+      row.levelLetter = letter;
+      row.manualFields.level = true;
+    } else if (field === "baseSalary") {
+      const n = parseNumber(newValue);
+      if (!Number.isFinite(n)) return;
+      row.baseSalary = n;
+      row.manualFields.baseSalary = true;
+    } else if (field === "p80" || field === "p100" || field === "p120") {
+      const n = parseNumber(newValue);
+      if (!Number.isFinite(n)) return;
+      row[field] = n;
+      row.manualFields[field] = true;
+    } else {
+      return;
+    }
+
+    recomputeRow(row);
+    saveToStorage(state.rows, state.meta);
+    applyFilters();
+  }
+
+  // Reverte edições de uma linha: limpa manualFields e re-aplica catálogo.
+  function revertRowEdits(row) {
+    if (!row) return;
+    row.manualFields = {};
+    row.manualEdited = false;
+    // recomputeRow vai consultar o catálogo (sem manuais) para restaurar p80/p100/p120
+    recomputeRow(row);
+    saveToStorage(state.rows, state.meta);
+    applyFilters();
+  }
+
+  // Reverte TODAS as linhas editadas.
+  function revertAllEdits() {
+    let count = 0;
+    for (const r of state.rows) {
+      if (r.manualEdited) {
+        r.manualFields = {};
+        r.manualEdited = false;
+        recomputeRow(r);
+        count++;
+      }
+    }
+    saveToStorage(state.rows, state.meta);
+    applyFilters();
+    return count;
+  }
+
+  function saveBandsCatalog() {
+    try {
+      localStorage.setItem(STORAGE_BANDS, JSON.stringify(state.bandsCatalog || []));
+    } catch (e) {
+      console.warn("Falha ao salvar catalogo de bandas:", e);
+    }
+  }
+
+  function loadBandsCatalog() {
+    try {
+      const raw = localStorage.getItem(STORAGE_BANDS);
+      if (!raw) return [];
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ===== fim v4.3 =====
 
   function computeKPIs(rows) {
     const total = rows.length;
@@ -573,12 +750,14 @@
     const above = rows.filter(r => r.status.startsWith("Acima")).length;
     const compas = rows.map(r => r.compa).filter(Number.isFinite);
     const avgCompa = compas.length ? compas.reduce((a,b)=>a+b,0)/compas.length : null;
+    const edited = rows.filter(r => r.manualEdited).length;
 
     ui.kpiTotal.textContent = String(total);
     ui.kpiBelow.textContent = String(below);
     ui.kpiWithin.textContent = String(within);
     ui.kpiAbove.textContent = String(above);
     ui.kpiAvgCompa.textContent = Number.isFinite(avgCompa) ? fmtNum(avgCompa, 2) : "0,00";
+    if (ui.kpiEdited) ui.kpiEdited.textContent = String(edited);
   }
 
   function buildTableHeader() {
@@ -618,6 +797,11 @@
     tr.appendChild(th("Status","status"));
     tr.appendChild(th("Faixa", null));
 
+    // v4.3 - coluna Ações apenas no modo edição
+    if (state.editMode) {
+      tr.appendChild(th("Ações", null));
+    }
+
     ui.tblHead.appendChild(tr);
 
     // indicador de ordenação
@@ -638,8 +822,19 @@
     ui.tblBody.innerHTML = "";
     const frag = document.createDocumentFragment();
 
+    // Coleta opções únicas para os selects de Pay Band e Level (só usado no modo edição)
+    const payBandOptions = state.editMode
+      ? Array.from(new Set((state.bandsCatalog || []).map(b => b.group).filter(Boolean)))
+          .sort((a,b)=>a.localeCompare(b,"pt-BR"))
+      : [];
+    const levelOptions = state.editMode
+      ? Array.from(new Set((state.bandsCatalog || []).map(b => b.level).filter(Boolean)))
+          .sort()
+      : [];
+
     for (const r of rows) {
       const tr = document.createElement("tr");
+      if (r.manualEdited) tr.classList.add("row-edited");
 
       const td = (text, cls) => {
         const x = document.createElement("td");
@@ -648,21 +843,114 @@
         return x;
       };
 
-      tr.appendChild(td(r.employeeName || r.employeeId || `Linha ${r.rowIndex}`));
-      tr.appendChild(td(r.jobFamily || ""));
-      tr.appendChild(td(r.payBand || ""));
-      tr.appendChild(td(r.level || ""));
+      // Coluna Colaborador (sempre só leitura) + flag visual se editado
+      const tdName = document.createElement("td");
+      tdName.textContent = r.employeeName || r.employeeId || `Linha ${r.rowIndex}`;
+      if (r.manualEdited) {
+        const flag = document.createElement("span");
+        flag.className = "edit-flag";
+        flag.textContent = "EDIT";
+        tdName.appendChild(flag);
+      }
+      tr.appendChild(tdName);
 
+      tr.appendChild(td(r.jobFamily || ""));
+
+      // Pay Band: editável no modo edição (select com datalist se houver catálogo, senão input livre)
+      const tdBand = document.createElement("td");
+      if (state.editMode) {
+        if (payBandOptions.length) {
+          const sel = document.createElement("select");
+          sel.className = "cell-edit-select";
+          // garante que o valor atual aparece mesmo se não estiver no catálogo
+          const current = safeText(r.payBand);
+          const all = current && !payBandOptions.includes(current)
+            ? [current].concat(payBandOptions)
+            : payBandOptions.slice();
+          for (const v of all) {
+            const o = document.createElement("option");
+            o.value = v; o.textContent = v;
+            if (v === current) o.selected = true;
+            sel.appendChild(o);
+          }
+          sel.addEventListener("change", () => applyRowEdit(r, "payBand", sel.value));
+          tdBand.appendChild(sel);
+        } else {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.className = "cell-edit-text";
+          inp.value = safeText(r.payBand);
+          inp.addEventListener("change", () => applyRowEdit(r, "payBand", inp.value));
+          tdBand.appendChild(inp);
+        }
+      } else {
+        tdBand.textContent = r.payBand || "";
+      }
+      tr.appendChild(tdBand);
+
+      // Level: sempre editável (independente do modo edição global) — recalcula automaticamente no change
+      const tdLevel = document.createElement("td");
+      {
+        const sel = document.createElement("select");
+        sel.className = "cell-edit-select";
+        const current = safeText(r.levelLetter || r.level).toUpperCase();
+        const all = ["A","B","C","D","E","F","G","H","I","J"];
+        const merged = current && !all.includes(current) ? [current].concat(all) : all;
+        for (const v of merged) {
+          const o = document.createElement("option");
+          o.value = v; o.textContent = v;
+          if (v === current) o.selected = true;
+          sel.appendChild(o);
+        }
+        sel.addEventListener("change", () => applyRowEdit(r, "level", sel.value));
+        tdLevel.appendChild(sel);
+      }
+      tr.appendChild(tdLevel);
+
+      // Colunas extras (sempre só leitura)
       for (const c of (state.visibleExtraColumns || [])) {
         const v = r.extras ? r.extras[c] : "";
         if (typeof v === "number" && Number.isFinite(v)) tr.appendChild(td(String(v), "num"));
         else tr.appendChild(td(safeText(v)));
       }
 
-      tr.appendChild(td(fmtMoney(r.baseSalary, r.currency), "num"));
-      tr.appendChild(td(fmtMoney(r.p80, r.currency), "num"));
-      tr.appendChild(td(fmtMoney(r.p100, r.currency), "num"));
-      tr.appendChild(td(fmtMoney(r.p120, r.currency), "num"));
+      // Salário base: editável no modo edição
+      const tdSal = document.createElement("td");
+      tdSal.className = "num";
+      if (state.editMode) {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.step = "1";
+        inp.className = "cell-edit-num";
+        inp.value = Number.isFinite(r.baseSalary) ? Math.round(r.baseSalary) : "";
+        inp.addEventListener("change", () => applyRowEdit(r, "baseSalary", inp.value));
+        tdSal.appendChild(inp);
+      } else {
+        tdSal.textContent = fmtMoney(r.baseSalary, r.currency);
+      }
+      tr.appendChild(tdSal);
+
+      // P80, P100, P120: editáveis no modo edição (override manual)
+      const editableP = (field, val) => {
+        const tdP = document.createElement("td");
+        tdP.className = "num";
+        if (state.editMode) {
+          const inp = document.createElement("input");
+          inp.type = "number";
+          inp.step = "1";
+          inp.className = "cell-edit-num";
+          inp.value = Number.isFinite(val) ? Math.round(val) : "";
+          inp.addEventListener("change", () => applyRowEdit(r, field, inp.value));
+          tdP.appendChild(inp);
+        } else {
+          tdP.textContent = fmtMoney(val, r.currency);
+        }
+        return tdP;
+      };
+      tr.appendChild(editableP("p80", r.p80));
+      tr.appendChild(editableP("p100", r.p100));
+      tr.appendChild(editableP("p120", r.p120));
+
       tr.appendChild(td(Number.isFinite(r.compa) ? fmtNum(r.compa, 2) : "", "num"));
 
       const tdStatus = document.createElement("td");
@@ -672,6 +960,19 @@
       const tdViz = document.createElement("td");
       tdViz.innerHTML = buildBandViz({ p80: r.p80, p100: r.p100, p120: r.p120, salary: r.baseSalary });
       tr.appendChild(tdViz);
+
+      // Ações (apenas modo edição)
+      if (state.editMode) {
+        const tdAct = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.className = "btn-row-revert";
+        btn.type = "button";
+        btn.textContent = "Reverter";
+        btn.disabled = !r.manualEdited;
+        btn.addEventListener("click", () => revertRowEdits(r));
+        tdAct.appendChild(btn);
+        tr.appendChild(tdAct);
+      }
 
       frag.appendChild(tr);
     }
@@ -1033,6 +1334,7 @@ rows = applySort(rows);
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(STORAGE_META);
     localStorage.removeItem(STORAGE_COLS);
+    localStorage.removeItem(STORAGE_BANDS);
   }
 
   function exportTxt(rows, meta) {
@@ -1046,12 +1348,13 @@ rows = applySort(rows);
     lines.push("");
 
     const extra = state.visibleExtraColumns || [];
-    const header = ["EmployeeName","JobFamily","PayBand","Level"].concat(extra).concat(["Currency","BaseSalary","P80","P100","P120","Compa","Status","FonteFaixa"]);
+    const header = ["EmployeeName","JobFamily","PayBand","Level"].concat(extra).concat(["Currency","BaseSalary","P80","P100","P120","Compa","Status","FonteFaixa","Editado","CamposEditados"]);
     lines.push(header.join(" | "));
     lines.push("");
 
     for (const r of rows) {
       const extraVals = extra.map(c => safeText((r.extras || {})[c]));
+      const editFields = Object.keys(r.manualFields || {}).filter(k => r.manualFields[k]).join(",");
       lines.push([
         safeText(r.employeeName || r.employeeId),
         safeText(r.jobFamily),
@@ -1066,6 +1369,8 @@ rows = applySort(rows);
         Number.isFinite(r.compa) ? r.compa.toFixed(4) : "",
         safeText(r.status),
         safeText(r.bandSource),
+        r.manualEdited ? "Sim" : "Nao",
+        editFields,
       ].join(" | "));
     }
 
@@ -1099,7 +1404,9 @@ rows = applySort(rows);
       "P120",
       "Compa",
       "Status",
-      "FonteFaixa"
+      "FonteFaixa",
+      "Editado",
+      "CamposEditados"
     ];
 
     const header = baseHeader.concat(extraCols);
@@ -1108,6 +1415,7 @@ rows = applySort(rows);
     aoa.push(header);
 
     for (const r of rows) {
+      const editFields = Object.keys(r.manualFields || {}).filter(k => r.manualFields[k]).join(",");
       const row = [
         safeText(r.employeeName),
         safeText(r.employeeId),
@@ -1122,7 +1430,9 @@ rows = applySort(rows);
         Number.isFinite(r.p120) ? Math.round(r.p120) : "",
         Number.isFinite(r.compa) ? Number(r.compa.toFixed(4)) : "",
         safeText(r.status),
-        safeText(r.bandSource)
+        safeText(r.bandSource),
+        r.manualEdited ? "Sim" : "Nao",
+        editFields
       ];
 
       for (const c of extraCols) {
@@ -1190,6 +1500,10 @@ rows = applySort(rows);
 
     const merged = joinAndCompute(parsed.employees, bandsTable, bandsEstimated, payMeta);
 
+    // v4.3 - constrói catálogo de bandas para uso na edição inline
+    state.bandsCatalog = buildBandsCatalogFromRows(merged);
+    saveBandsCatalog();
+
     const usedTable = merged.some(r => (r.bandSource || "").startsWith("Tabela"));
     const meta = {
       importedAt: nowISO(),
@@ -1206,7 +1520,7 @@ rows = applySort(rows);
       },
       extraColumns: state.extraColumns,
       visibleExtraColumns: state.visibleExtraColumns,
-      version: "v4.2"
+      version: "v4.3.1"
     };
 
     state.rows = merged;
@@ -1241,7 +1555,7 @@ rows = applySort(rows);
   }
 
   function initUI() {
-    ui.buildInfo.textContent = "Padrão Sonova | v4.2";
+    ui.buildInfo.textContent = "Padrão Sonova | v4.3.1";
 
     wireClearButton(ui.fSearch, el("btnClearSearch"));
     wireClearButton(ui.fMinCompa, el("btnClearMinCompa"));
@@ -1249,6 +1563,27 @@ rows = applySort(rows);
 
     ui.btnApply.addEventListener("click", applyFilters);
     ui.btnReset.addEventListener("click", resetFilters);
+
+    // v4.3 - toggle do modo edição
+    if (ui.btnEditMode) {
+      ui.btnEditMode.addEventListener("click", () => {
+        state.editMode = !state.editMode;
+        ui.btnEditMode.textContent = state.editMode ? "Modo edição: ON" : "Modo edição: OFF";
+        if (state.editMode) ui.btnEditMode.classList.add("active");
+        else ui.btnEditMode.classList.remove("active");
+        applyFilters();
+      });
+    }
+
+    // v4.3 - reverter todas as edições
+    if (ui.btnRevertAll) {
+      ui.btnRevertAll.addEventListener("click", () => {
+        const editedCount = state.rows.filter(r => r.manualEdited).length;
+        if (!editedCount) return;
+        if (!confirm(`Reverter ${editedCount} linha(s) editada(s)? Os valores voltam ao calculado pela tabela/estimativa.`)) return;
+        revertAllEdits();
+      });
+    }
 
     ui.fSearch.addEventListener("keydown", (e) => {
       if (e.key === "Enter") applyFilters();
@@ -1275,6 +1610,13 @@ rows = applySort(rows);
       state.extraColumns = [];
       state.visibleExtraColumns = [];
       state.extraFilterValues = {};
+      state.bandsCatalog = [];
+      state.editMode = false;
+
+      if (ui.btnEditMode) {
+        ui.btnEditMode.textContent = "Modo edição: OFF";
+        ui.btnEditMode.classList.remove("active");
+      }
 
       ui.dataInfo.textContent = "Storage limpo. Importe um Excel.";
       ui.tableInfo.textContent = "";
@@ -1316,6 +1658,19 @@ rows = applySort(rows);
       state.visibleExtraColumns = savedCols ? savedCols.filter(c => state.extraColumns.includes(c)) : (Array.isArray(m.visibleExtraColumns) ? m.visibleExtraColumns : []);
 
       if (!state.visibleExtraColumns.length) state.visibleExtraColumns = guessDefaultVisibleColumns(state.extraColumns);
+
+      // v4.3 - recarregar catálogo de bandas; se não existir (storage antigo), reconstruir das linhas
+      state.bandsCatalog = loadBandsCatalog();
+      if (!state.bandsCatalog.length && state.rows.length) {
+        state.bandsCatalog = buildBandsCatalogFromRows(state.rows);
+        saveBandsCatalog();
+      }
+
+      // v4.3 - garantir que linhas do storage antigo tenham os campos manualFields/manualEdited
+      for (const r of state.rows) {
+        if (typeof r.manualEdited !== "boolean") r.manualEdited = false;
+        if (!r.manualFields || typeof r.manualFields !== "object") r.manualFields = {};
+      }
 
       buildColPicker();
       fillFiltersFromRows(state.rows);

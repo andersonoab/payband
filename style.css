@@ -180,7 +180,7 @@ main{
 
 .kpis{
   display:grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 12px;
   margin-top: 14px;
 }
@@ -411,4 +411,82 @@ th.sortable.sort-desc::after{
   font-size: 11px;
   color: var(--muted);
   font-weight: 700;
+}
+
+/* v4.3 - edição inline */
+.btn.active{
+  background: var(--sonova);
+  color: #fff;
+  border-color: var(--sonova);
+}
+
+.cell-edit-text,
+.cell-edit-num,
+.cell-edit-select{
+  width: 100%;
+  min-width: 90px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+}
+
+.cell-edit-num{
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 100px;
+}
+
+.cell-edit-text:focus,
+.cell-edit-num:focus,
+.cell-edit-select:focus{
+  border-color: var(--sonova-2);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+tr.row-edited{
+  background: rgba(245, 158, 11, 0.06);
+}
+
+tr.row-edited td:first-child{
+  border-left: 3px solid #f59e0b;
+}
+
+.edit-flag{
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  vertical-align: middle;
+}
+
+.btn-row-revert{
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-row-revert:hover{
+  border-color: rgba(153,27,27,0.35);
+  background: rgba(153,27,27,0.04);
+}
+
+.btn-row-revert:disabled{
+  opacity: 0.35;
+  cursor: not-allowed;
 }

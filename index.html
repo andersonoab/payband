@@ -20,6 +20,8 @@
         <div class="actions">
           <label class="btn secondary" for="fileInput">Importar Excel</label>
           <input id="fileInput" type="file" accept=".xlsx,.xls" />
+          <button id="btnEditMode" class="btn secondary" type="button">Modo edição: OFF</button>
+          <button id="btnRevertAll" class="btn secondary" type="button">Reverter edições</button>
           <button id="btnExportTxt" class="btn secondary" type="button">Exportar TXT</button>
           <button id="btnExportXlsx" class="btn secondary" type="button">Exportar Excel</button>
           <button id="btnClear" class="btn danger" type="button">Limpar storage</button>
@@ -119,6 +121,10 @@
           <div class="kpi">
             <div class="kpi-label">Compa médio</div>
             <div class="kpi-value" id="kpiAvgCompa">0,00</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Editados</div>
+            <div class="kpi-value" id="kpiEdited">0</div>
           </div>
         </div>
       </section>

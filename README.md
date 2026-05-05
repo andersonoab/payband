@@ -17,7 +17,7 @@ O **Compensation Bands** é uma aplicação web estática (HTML + CSS + JS) para
 
 A ferramenta foi construída para apoiar decisões de People Analytics, revisões salariais, calibração e auditorias internas.
 
-Versão atual: **v4.2**
+Versão atual: **v4.3.1**
 
 ---
 
@@ -82,6 +82,49 @@ Funciona para:
 - Status
 
 Indicador visual ASC / DESC no cabeçalho.
+
+---
+
+### 2.5 Edição Inline (v4.3)
+
+Modo de edição direto na tabela para análises **what-if** sem precisar reimportar Excel.
+
+Como ativar:
+
+- Clicar no botão **"Modo edição: OFF"** no topbar para alternar para **ON**
+- As 4 colunas-chave passam a aceitar edição:
+  - **Pay Band** — select com todos os grupos do catálogo de bandas
+  - **Salário** — input numérico
+  - **P80 / P100 / P120** — override manual (para faixa hipotética)
+
+Exceção (sempre editável, sem precisar do modo edição):
+
+- **Level** — select A-J sempre disponível na célula. Ajuste rápido com recálculo automático imediato. Útil para análises pontuais "e se subir essa pessoa para Level G?".
+
+Comportamento ao editar:
+
+- Edição em **Pay Band** ou **Level** → busca no catálogo e atualiza P80/P100/P120 automaticamente
+- Edição em **Salário** → recalcula Compa e Status mantendo a faixa
+- Edição em **P80/P100/P120** → marca FonteFaixa como "Manual" e mantém o valor digitado
+- Recálculo é imediato: KPIs, Status e visualização da faixa atualizam ao vivo
+
+Rastreabilidade:
+
+- Linha editada recebe destaque visual (borda lateral âmbar) e flag **EDIT** ao lado do nome
+- KPI **Editados** mostra o total de linhas alteradas
+- Coluna **Ações** com botão **Reverter** por linha
+- Botão **Reverter edições** no topbar (com confirmação) restaura todas as linhas
+
+Persistência:
+
+- Edições são salvas em localStorage automaticamente
+- Catálogo de bandas é persistido para permitir recálculo correto após reload
+- Importar novo Excel descarta edições anteriores (evita mistura de dados)
+
+Exportação:
+
+- TXT e Excel ganham as colunas **Editado** (Sim/Não) e **CamposEditados** (lista dos campos alterados)
+- Permite auditoria completa do que foi mexido em tela
 
 ---
 
@@ -182,6 +225,16 @@ Melhorias implementadas na v4.2:
 - Exportação Excel conforme filtros aplicados
 - Persistência via localStorage
 
+Novidades v4.3:
+
+- Modo edição inline para Pay Band, Level, Salário, P80/P100/P120
+- Recálculo automático de Compa e Status ao editar
+- Catálogo de bandas persistido para recalcular após reload
+- Destaque visual e flag EDIT em linhas alteradas
+- KPI de linhas editadas
+- Botão Reverter por linha e Reverter edições global
+- Coluna Editado e CamposEditados nos exports TXT e Excel
+
 ---
 
 ## 7. Uso
@@ -223,7 +276,8 @@ Possíveis evoluções:
 
 ## 10. Versão Atual
 
-v4.2  
+v4.3.1  
+Edição inline + Level sempre editável + rastreabilidade nos exports.  
 Base oficial para evoluções futuras.
 
 ---
